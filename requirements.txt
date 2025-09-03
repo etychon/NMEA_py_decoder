@@ -1,0 +1,16 @@
+# NMEA Parser Dependencies
+colorama>=0.4.4  # For colored terminal output
+
+# This project previously used only Python standard library modules
+
+# Python 3.6+ required for:
+# - Type hints (typing module)
+# - f-string formatting
+# - Dictionary comprehensions
+
+# Standard library modules used:
+# - sys: Command line arguments and I/O
+# - re: Regular expressions (if needed for future enhancements)
+# - datetime: Date and time parsing
+# - typing: Type hints for better code documentation
+# - math: Mathematical operations for coordinate conversions
