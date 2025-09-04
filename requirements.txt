@@ -1,5 +1,6 @@
 # NMEA Parser Dependencies
 colorama>=0.4.4  # For colored terminal output
+splunk-sdk>=1.7.0  # For Splunk integration (optional)
 
 # This project previously used only Python standard library modules
 
