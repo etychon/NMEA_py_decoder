@@ -124,6 +124,14 @@ class SplunkLogger:
         
         logger.info("Disconnected from Splunk")
     
+    def flush(self):
+        """Force flush of any pending events"""
+        if not self.connected:
+            return
+        
+        logger.info("Flushing pending Splunk events...")
+        self._flush_remaining_events()
+    
     def log_nmea_data(self, parsed_data: Dict, raw_sentence: str = None):
         """Queue NMEA data for sending to Splunk"""
         if not self.connected:
@@ -136,6 +144,10 @@ class SplunkLogger:
         # Add to queue for batch processing
         try:
             self.event_queue.put_nowait(event)
+            
+            # Human-readable log output
+            self._log_human_readable_nmea(parsed_data, raw_sentence)
+            
             return True
         except Exception as e:
             logger.error(f"Failed to queue event: {e}")
@@ -160,6 +172,10 @@ class SplunkLogger:
         
         try:
             self.event_queue.put_nowait(event)
+            
+            # Human-readable log output for summary
+            self._log_human_readable_summary(summary_data)
+            
             return True
         except Exception as e:
             logger.error(f"Failed to queue summary event: {e}")
@@ -294,6 +310,86 @@ class SplunkLogger:
     def get_stats(self) -> Dict:
         """Get statistics about Splunk logging"""
         return self.stats.copy()
+    
+    def _log_human_readable_nmea(self, parsed_data: Dict, raw_sentence: str = None):
+        """Log human-readable output for NMEA data sent to Splunk"""
+        sentence_type = parsed_data.get('type', 'Unknown')
+        
+        # Create a concise human-readable log message
+        if sentence_type in ['GGA', 'RMC']:
+            # Position data
+            lat = parsed_data.get('latitude')
+            lon = parsed_data.get('longitude')
+            if lat is not None and lon is not None:
+                alt_text = f", {parsed_data.get('altitude', 0):.1f}m" if parsed_data.get('altitude') else ""
+                time_text = f" at {parsed_data.get('time', 'unknown')}" if parsed_data.get('time') else ""
+                print(f"📤 Splunk: {sentence_type} Position {lat:.6f}°, {lon:.6f}°{alt_text}{time_text}")
+            else:
+                print(f"📤 Splunk: {sentence_type} sentence (no position)")
+        
+        elif sentence_type in ['GSV']:
+            # Satellite data
+            total_sats = parsed_data.get('total_satellites', 0)
+            satellites = parsed_data.get('satellites', [])
+            visible_sats = len([s for s in satellites if s.get('snr')])
+            print(f"📤 Splunk: {sentence_type} Satellites - {total_sats} total, {visible_sats} with signal")
+        
+        elif sentence_type in ['GSA']:
+            # Fix data
+            fix_type = parsed_data.get('fix_type', 'Unknown')
+            sats_used = len(parsed_data.get('satellites_used', []))
+            hdop = parsed_data.get('hdop')
+            hdop_text = f", HDOP {hdop}" if hdop else ""
+            print(f"📤 Splunk: {sentence_type} Fix - {fix_type}, {sats_used} satellites{hdop_text}")
+        
+        elif sentence_type in ['VTG']:
+            # Velocity data
+            speed = parsed_data.get('speed_knots')
+            course = parsed_data.get('course_true')
+            if speed is not None and course is not None:
+                print(f"📤 Splunk: {sentence_type} Velocity - {speed:.1f} knots @ {course:.1f}°")
+            else:
+                print(f"📤 Splunk: {sentence_type} sentence (no velocity)")
+        
+        else:
+            # Generic sentence
+            print(f"📤 Splunk: {sentence_type} sentence")
+    
+    def _log_human_readable_summary(self, summary_data: Dict):
+        """Log human-readable output for summary data sent to Splunk"""
+        position = summary_data.get('position', {})
+        satellites = summary_data.get('satellites', {})
+        
+        # Position summary
+        if position.get('lat') and position.get('lon'):
+            lat, lon = position['lat'], position['lon']
+            alt_text = f", {position.get('alt', 0):.1f}m" if position.get('alt') else ""
+            print(f"📤 Splunk: Summary - Position {lat:.6f}°, {lon:.6f}°{alt_text}")
+        
+        # Satellite summary
+        total_visible = 0
+        total_used = 0
+        constellation_count = 0
+        
+        for constellation, data in satellites.items():
+            if isinstance(data, dict):
+                constellation_count += 1
+                total_visible += data.get('visible_count', 0)
+                total_used += data.get('used_count', 0)
+        
+        if constellation_count > 0:
+            print(f"📤 Splunk: Summary - {constellation_count} constellations, {total_visible} visible, {total_used} used")
+        
+        # Fix quality
+        fix_info = summary_data.get('fix_info', {})
+        if fix_info.get('quality'):
+            quality = fix_info['quality']
+            sats = fix_info.get('satellites', 0)
+            hdop = fix_info.get('hdop')
+            hdop_text = f", HDOP {hdop}" if hdop else ""
+            print(f"📤 Splunk: Summary - {quality}, {sats} satellites{hdop_text}")
+        
+        print(f"📤 Splunk: Summary data sent to index '{self.config.index}'")
     
     def test_connection(self) -> tuple[bool, Optional[str]]:
         """Test the Splunk connection"""

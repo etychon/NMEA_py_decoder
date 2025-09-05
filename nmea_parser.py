@@ -64,6 +64,12 @@ class NMEAParser:
         self.last_position = None
         self.position_history = []
         
+        # Block-based processing
+        self.current_block = {}
+        self.block_timeout = 2.0  # seconds
+        self.last_sentence_time = None
+        self.pending_position_data = None
+        
         self.parsers = {
             'GPGGA': self.parse_gga,
             'GNGGA': self.parse_gga,
@@ -105,9 +111,26 @@ class NMEAParser:
             parts[-1] = parts[-1].split('*')[0]
             
         if sentence_type in self.parsers:
-            return self.parsers[sentence_type](parts)
+            result = self.parsers[sentence_type](parts)
+            
+            # Check for block timeout after each sentence
+            self._check_block_timeout()
+            
+            return result
         
         return {'type': sentence_type, 'raw': sentence}
+    
+    def _check_block_timeout(self):
+        """Check if current block has timed out and should be processed"""
+        if not self.pending_position_data or not self.last_sentence_time:
+            return
+        
+        import time
+        current_time = time.time()
+        time_since_last = current_time - self.last_sentence_time
+        
+        if time_since_last > self.block_timeout:
+            self._process_completed_block()
     
     def parse_gga(self, parts: List[str]) -> Dict:
         """Parse GGA sentence - Global Positioning System Fix Data"""
@@ -132,8 +155,9 @@ class NMEAParser:
         if result['latitude'] and result['longitude']:
             self.position = (result['latitude'], result['longitude'], result.get('altitude'))
             
-            # Process new position in real-time
-            self._process_new_position(result)
+            # Store position data for block processing
+            self.pending_position_data = result
+            self._update_current_block('position', result)
             
         if result['time']:
             self.time_info = result['time']
@@ -168,8 +192,10 @@ class NMEAParser:
         if result['latitude'] and result['longitude']:
             self.position = (result['latitude'], result['longitude'], None)
             
-            # Process new position in real-time
-            self._process_new_position(result)
+            # Store position data for block processing (RMC can also provide position)
+            if not self.pending_position_data:  # Only use RMC if no GGA data
+                self.pending_position_data = result
+                self._update_current_block('position', result)
             
         if result['time']:
             self.time_info = result['time']
@@ -179,6 +205,7 @@ class NMEAParser:
                 'speed_kmh': result['speed_knots'] * 1.852,
                 'course': result['course']
             }
+            self._update_current_block('velocity', result)
             
         return result
     
@@ -198,6 +225,9 @@ class NMEAParser:
             'hdop': float(parts[16]) if parts[16] else None,
             'vdop': float(parts[17]) if parts[17] else None,
         }
+        
+        # Track satellite fix data in block
+        self._update_current_block('fix_data', result)
         
         return result
     
@@ -243,6 +273,9 @@ class NMEAParser:
                 existing.update(sat)
             else:
                 self.satellites[constellation].append(sat)
+        
+        # Track satellite data in block
+        self._update_current_block('satellites', result)
         
         return result
     
@@ -784,6 +817,109 @@ class NMEAParser:
         bearing = (bearing + 360) % 360  # Normalize to 0-360
         
         return bearing
+    
+    def _update_current_block(self, data_type: str, data: Dict):
+        """Update the current NMEA block with new data"""
+        import time
+        
+        current_time = time.time()
+        self.last_sentence_time = current_time
+        
+        # Initialize block if needed
+        if not self.current_block:
+            self.current_block = {
+                'start_time': current_time,
+                'sentence_count': 0,
+                'data_types': set()
+            }
+        
+        # Update block
+        self.current_block['sentence_count'] += 1
+        self.current_block['data_types'].add(data_type)
+        self.current_block[data_type] = data
+        
+        # Check if block should be processed
+        self._check_block_completion()
+    
+    def _check_block_completion(self):
+        """Check if current block is complete and should trigger position processing"""
+        if not self.current_block or not self.pending_position_data:
+            return
+        
+        # Block completion criteria:
+        # 1. We have position data AND
+        # 2. We have multiple data types (position + velocity/satellites/etc)
+        has_position = 'position' in self.current_block
+        has_additional_data = len(self.current_block['data_types']) > 1
+        
+        # Process immediately if we have position + additional data
+        if has_position and has_additional_data:
+            self._process_completed_block()
+    
+    def _process_completed_block(self):
+        """Process a completed NMEA block and trigger position callbacks"""
+        if not self.pending_position_data:
+            return
+        
+        # Create enhanced position info with block data
+        position_info = {
+            'timestamp': datetime.now().isoformat(),
+            'latitude': self.pending_position_data.get('latitude'),
+            'longitude': self.pending_position_data.get('longitude'),
+            'altitude': self.pending_position_data.get('altitude'),
+            'time': self.pending_position_data.get('time'),
+            'fix_quality': self.pending_position_data.get('fix_quality'),
+            'num_satellites': self.pending_position_data.get('num_satellites'),
+            'hdop': self.pending_position_data.get('hdop'),
+            'source': self.pending_position_data.get('type', 'Unknown'),
+            'block_info': {
+                'sentence_count': self.current_block.get('sentence_count', 0),
+                'data_types': list(self.current_block.get('data_types', [])),
+                'has_velocity': 'velocity' in self.current_block
+            }
+        }
+        
+        # Add velocity data if available in block
+        if 'velocity' in self.current_block:
+            velocity_data = self.current_block['velocity']
+            position_info['velocity'] = {
+                'speed_knots': velocity_data.get('speed_knots'),
+                'course': velocity_data.get('course')
+            }
+        
+        # Calculate movement if we have a previous position
+        if self.last_position:
+            movement_info = self._calculate_movement(self.last_position, position_info)
+            position_info.update(movement_info)
+        
+        # Store position in history (keep last 100 positions)
+        self.position_history.append(position_info)
+        if len(self.position_history) > 100:
+            self.position_history.pop(0)
+        
+        # Update last position
+        self.last_position = position_info
+        
+        # Call all registered callbacks
+        for callback in self.position_callbacks:
+            try:
+                callback(position_info)
+            except Exception as e:
+                # Don't let callback errors break the parser
+                print(f"Error in position callback: {e}")
+        
+        # Reset for next block
+        self._reset_current_block()
+    
+    def _reset_current_block(self):
+        """Reset the current block for the next cycle"""
+        self.current_block = {}
+        self.pending_position_data = None
+    
+    def force_block_processing(self):
+        """Force processing of current block (useful for end of stream)"""
+        if self.pending_position_data:
+            self._process_completed_block()
 
 class UDPReceiver:
     """
@@ -1181,6 +1317,12 @@ def create_position_tracker(args, nmea_parser):
         if alt is not None:
             coords_text += f", {alt:.1f}m"
         
+        # Show block information
+        if 'block_info' in position_info:
+            block_info = position_info['block_info']
+            block_text = f"Block: {block_info['sentence_count']} sentences, types: {', '.join(block_info['data_types'])}"
+            print(f"📦 {nmea_parser.colorize('NMEA Block Processed:', 'header')} {nmea_parser.colorize(block_text, 'info')}")
+        
         print(f"📍 {nmea_parser.colorize('Position:', 'label')} {nmea_parser.colorize(coords_text, 'data')}")
         
         # Movement analysis
@@ -1204,6 +1346,15 @@ def create_position_tracker(args, nmea_parser):
                     print(f"   🚨 {nmea_parser.colorize('Large position jump detected!', 'error')}")
             else:
                 print(f"   {nmea_parser.colorize('Status:', 'label')} {nmea_parser.colorize('STATIONARY', 'warning')}")
+        
+        # Show velocity from block if available
+        if 'velocity' in position_info:
+            velocity = position_info['velocity']
+            if velocity['speed_knots'] is not None:
+                vel_text = f"{velocity['speed_knots']:.1f} knots"
+                if velocity['course'] is not None:
+                    vel_text += f" @ {velocity['course']:.1f}°"
+                print(f"   {nmea_parser.colorize('Block Velocity:', 'label')} {nmea_parser.colorize(vel_text, 'data')}")
         
         # Geofence checking
         if args.geofence:
@@ -1375,10 +1526,16 @@ def main():
             # Display summary
             print(nmea_parser.format_summary())
         
+        # Force processing of any pending block
+        nmea_parser.force_block_processing()
+        
         # Send summary to Splunk if enabled
         if splunk_logger:
             summary_data = nmea_parser.get_summary_dict()
             splunk_logger.log_summary_data(summary_data)
+            
+            # Force flush to ensure all events are sent
+            splunk_logger.flush()
             
             # Show Splunk statistics
             if not args.json:
