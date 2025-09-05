@@ -746,6 +746,206 @@ This is a single-file script designed for simplicity and portability. To extend 
 
 This script is provided as-is for educational and practical use. Feel free to modify and distribute.
 
+## Cisco IOx Deployment
+
+The NMEA Parser can be deployed as a **Cisco IOx application** on IOx-enabled routers, providing edge processing capabilities for maritime and GPS applications directly on network infrastructure.
+
+### 🚀 **IOx Features**
+
+- **Edge Processing**: Parse NMEA data directly on Cisco routers without external servers
+- **Real-time Analysis**: Process GPS/GNSS data with minimal latency at the network edge
+- **Maritime Integration**: Perfect for ship-to-shore communications and fleet management
+- **Automated Deployment**: Complete containerized application with health monitoring
+- **Resource Efficient**: Optimized for IOx resource constraints with configurable limits
+
+### Building the IOx Package
+
+1. **Prerequisites**:
+   ```bash
+   # Install Docker
+   # Install ioxclient (optional, for validation)
+   pip install ioxclient
+   ```
+
+2. **Build the IOx package**:
+   ```bash
+   # Full build process
+   ./build_iox.sh
+   
+   # Or step by step
+   ./build_iox.sh docker   # Build Docker image only
+   ./build_iox.sh test     # Test the image
+   ./build_iox.sh package  # Create IOx package
+   ```
+
+3. **Output**: Creates `nmea-parser-1.0.0.tar` ready for deployment
+
+### IOx Deployment Steps
+
+#### 1. Upload to Router
+```bash
+# Using ioxclient
+ioxclient app install nmea-parser-1.0.0.tar --name nmea-parser
+
+# Or via Local Manager web interface at https://router-ip:8443
+```
+
+#### 2. Configure Application
+```bash
+# Activate the application
+ioxclient app activate nmea-parser
+
+# Start the application
+ioxclient app start nmea-parser
+```
+
+#### 3. Network Configuration
+- **UDP Port 4001**: NMEA data input (configure your GPS device to send here)
+- **TCP Port 8080**: Health check and monitoring endpoint
+
+#### 4. Verification
+```bash
+# Check application status
+ioxclient app status nmea-parser
+
+# View real-time logs
+ioxclient app logs nmea-parser --follow
+
+# Test health endpoint
+curl http://router-ip:8080/health
+```
+
+### IOx Configuration Options
+
+Configure the application using environment variables:
+
+```bash
+# Service mode
+NMEA_MODE=udp                    # 'udp' or 'file'
+NMEA_UDP_PORT=4001              # UDP port for NMEA data
+NMEA_UDP_HOST=0.0.0.0           # Bind to all interfaces
+
+# Position tracking
+NMEA_TRACK_POSITION=true        # Enable position tracking
+NMEA_MIN_MOVEMENT=1.0           # Movement threshold in meters
+
+# Geofencing (JSON format)
+NMEA_GEOFENCES='[{"lat": 50.612, "lon": 5.587, "radius": 100, "name": "Harbor"}]'
+
+# Output options
+NMEA_CONTINUOUS=true            # Continuous output mode
+NMEA_JSON_OUTPUT=false          # JSON format output
+NMEA_VERBOSE_LOGGING=false      # Detailed logging
+
+# Splunk integration
+NMEA_SPLUNK_ENABLED=false       # Enable Splunk logging
+SPLUNK_HOST=splunk.company.com
+SPLUNK_INDEX=maritime_data
+
+# Monitoring
+NMEA_STATS_INTERVAL=300         # Statistics interval (seconds)
+NMEA_LOG_LEVEL=INFO            # Log level
+```
+
+### IOx Use Cases
+
+#### 🚢 **Maritime Edge Processing**
+```bash
+# Deploy on ship's network router
+# Process AIS and GPS data locally
+# Forward processed data to shore via satellite link
+```
+
+#### 🏭 **Industrial IoT**
+```bash
+# Install on industrial edge routers
+# Process equipment GPS tracking
+# Integrate with factory automation systems
+```
+
+#### 🚛 **Fleet Management**
+```bash
+# Deploy on vehicle communication routers
+# Real-time position tracking and geofencing
+# Low-latency alerts and monitoring
+```
+
+### IOx Monitoring & Maintenance
+
+#### Health Monitoring
+- Automatic health checks every 30 seconds
+- Process monitoring and restart capabilities
+- Resource usage tracking (CPU, memory, disk)
+- Network connectivity validation
+
+#### Log Management
+```bash
+# View application logs
+ioxclient app logs nmea-parser
+
+# Access log files directly
+/app/logs/nmea_parser.log  # Main application log
+/app/logs/health.json      # Health check results
+/app/logs/stats.json       # Application statistics
+```
+
+#### Performance Tuning
+```bash
+# Adjust resource limits in package.yaml
+resources:
+  cpu: 200        # Increase CPU allocation
+  memory: 512     # Increase memory allocation
+  
+# Optimize for high-frequency data
+NMEA_UDP_BUFFER_SIZE=8192  # Larger UDP buffer
+NMEA_STATS_INTERVAL=60     # More frequent statistics
+```
+
+### IOx Troubleshooting
+
+#### Common Issues
+
+**Application won't start**
+```bash
+# Check resource availability
+ioxclient platform resource
+
+# Verify package integrity
+ioxclient app status nmea-parser
+
+# Check logs for errors
+ioxclient app logs nmea-parser
+```
+
+**No NMEA data received**
+```bash
+# Test UDP connectivity
+nc -u router-ip 4001 < sample_nmea.txt
+
+# Check firewall rules
+# Verify GPS device configuration
+```
+
+**High resource usage**
+```bash
+# Monitor resource consumption
+ioxclient app resource nmea-parser
+
+# Adjust configuration
+NMEA_VERBOSE_LOGGING=false
+NMEA_STATS_INTERVAL=600
+```
+
+#### Debug Mode
+```bash
+# Enable verbose logging
+ioxclient app configure nmea-parser --env NMEA_LOG_LEVEL=DEBUG
+
+# Restart application
+ioxclient app stop nmea-parser
+ioxclient app start nmea-parser
+```
+
 ## Troubleshooting
 
 ### Common Issues

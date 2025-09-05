@@ -1,0 +1,62 @@
+descriptor-schema-version: "2.10"
+
+info:
+  name: nmea-parser
+  description: "NMEA GPS/GNSS Data Parser for Maritime and IoT Applications"
+  version: "1.0.0"
+  author-link: "https://github.com/user/nmea_py_decoder"
+  author-name: "NMEA Parser Team"
+
+app:
+  cpuarch: "x86_64"
+  type: "docker"
+  
+  # Resource requirements
+  resources:
+    profile: "tiny"  # Use minimal resources for IOx
+    cpu: 100         # CPU units (100 = 1 core)
+    memory: 256      # Memory in MB
+    disk: 50         # Disk space in MB
+    
+  # Container startup
+  startup:
+    runtime: "docker"
+    target: "nmea-parser:latest"
+    
+  # Application configuration
+  env:
+    - name: "NMEA_UDP_PORT"
+      value: "4001"
+    - name: "NMEA_MODE"
+      value: "udp"
+    - name: "NMEA_CONTINUOUS"
+      value: "true"
+    - name: "PYTHONUNBUFFERED"
+      value: "1"
+      
+  # Network configuration
+  services:
+    - name: "nmea-udp"
+      description: "NMEA UDP Data Receiver"
+      ports:
+        - port: 4001
+          protocol: "udp"
+        - port: 8080
+          protocol: "tcp"  # For potential web interface
+          
+  # Optional: Persistent storage for logs
+  volumes:
+    - target-dir: "/app/logs"
+      size: "10MB"
+      
+# IOx specific configuration
+activation:
+  # Auto-start on router boot
+  auto-start: true
+  
+  # Monitoring configuration
+  monitoring:
+    - name: "nmea-health"
+      type: "periodic"
+      interval: 30
+      command: ["python3", "/app/health_check.py"]
